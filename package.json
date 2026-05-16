@@ -1,0 +1,16 @@
+{
+  "name": "@medigate/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MediGate Soroban Smart Contracts",
+  "scripts": {
+    "build": "cargo build --target wasm32-unknown-unknown --release",
+    "test": "cargo test",
+    "deploy:testnet": "bash scripts/deploy.sh --network testnet",
+    "deploy:testnet:node": "node scripts/deploy.mjs",
+    "deploy:mainnet": "bash scripts/deploy.sh --network mainnet",
+    "check": "cargo check",
+    "fmt": "cargo fmt",
+    "clean": "cargo clean"
+  }
+}

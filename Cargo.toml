@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "contracts/identity-registry",
+    "contracts/access-key-manager",
+    "contracts/permission-mask",
+    "contracts/break-glass",
+    "contracts/audit-logger",
+    "contracts/access_log",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+soroban-sdk = "21.0.0"
