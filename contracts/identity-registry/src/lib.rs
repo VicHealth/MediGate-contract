@@ -13,7 +13,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol,
+};
 
 // ============================================
 // Data Types
@@ -114,7 +116,9 @@ impl IdentityRegistryContract {
         };
 
         // Store the DID entry
-        env.storage().persistent().set(&DataKey::DidEntry(did.clone()), &entry);
+        env.storage()
+            .persistent()
+            .set(&DataKey::DidEntry(did.clone()), &entry);
 
         // Increment DID count
         let count: u64 = env.storage().persistent().get(&DID_COUNT).unwrap_or(0);
@@ -127,7 +131,9 @@ impl IdentityRegistryContract {
             role,
             timestamp,
         };
-        env.storage().persistent().set(&DataKey::RegistrationEvent(did.clone()), &event);
+        env.storage()
+            .persistent()
+            .set(&DataKey::RegistrationEvent(did.clone()), &event);
 
         entry
     }
@@ -150,16 +156,10 @@ impl IdentityRegistryContract {
     /// * `did` - The DID to update
     /// * `new_address` - The new Stellar address
     /// * `caller` - The address making the request (must match current address)
-    pub fn update_did(
-        env: Env,
-        did: String,
-        new_address: Address,
-        caller: Address,
-    ) -> DidEntry {
+    pub fn update_did(env: Env, did: String, new_address: Address, caller: Address) -> DidEntry {
         caller.require_auth();
 
-        let mut entry = Self::get_did_entry(&env, &did)
-            .expect("DID not found");
+        let mut entry = Self::get_did_entry(&env, &did).expect("DID not found");
 
         // Verify caller is the current owner
         if entry.stellar_address != caller {
@@ -173,7 +173,9 @@ impl IdentityRegistryContract {
         entry.stellar_address = new_address;
         entry.updated_at = env.ledger().timestamp();
 
-        env.storage().persistent().set(&DataKey::DidEntry(did.clone()), &entry);
+        env.storage()
+            .persistent()
+            .set(&DataKey::DidEntry(did.clone()), &entry);
 
         entry
     }
@@ -183,15 +185,10 @@ impl IdentityRegistryContract {
     /// # Arguments
     /// * `did` - The DID to deactivate
     /// * `caller` - The address making the request (must match current address)
-    pub fn deactivate_did(
-        env: Env,
-        did: String,
-        caller: Address,
-    ) {
+    pub fn deactivate_did(env: Env, did: String, caller: Address) {
         caller.require_auth();
 
-        let mut entry = Self::get_did_entry(&env, &did)
-            .expect("DID not found");
+        let mut entry = Self::get_did_entry(&env, &did).expect("DID not found");
 
         if entry.stellar_address != caller {
             panic!("Only the DID owner can deactivate");
@@ -200,7 +197,9 @@ impl IdentityRegistryContract {
         entry.status = DidStatus::Deactivated;
         entry.updated_at = env.ledger().timestamp();
 
-        env.storage().persistent().set(&DataKey::DidEntry(did.clone()), &entry);
+        env.storage()
+            .persistent()
+            .set(&DataKey::DidEntry(did.clone()), &entry);
     }
 
     /// Check if a DID is active.
@@ -228,7 +227,9 @@ impl IdentityRegistryContract {
     // ============================================
 
     fn get_did_entry(env: &Env, did: &String) -> Option<DidEntry> {
-        env.storage().persistent().get(&DataKey::DidEntry(did.clone()))
+        env.storage()
+            .persistent()
+            .get(&DataKey::DidEntry(did.clone()))
     }
 }
 
@@ -244,17 +245,14 @@ mod tests {
     #[test]
     fn test_register_and_resolve_did() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, IdentityRegistryContract);
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 
         let stellar_address = Address::generate(&env);
         let did = String::from_slice(&env, "did:stellar:GB1234ABCD");
 
-        let entry = client.register_did(
-            &did,
-            &stellar_address,
-            &UserRole::Patient,
-        );
+        let entry = client.register_did(&did, &stellar_address, &UserRole::Patient);
 
         assert_eq!(entry.stellar_address, stellar_address);
         assert_eq!(entry.role, UserRole::Patient);
@@ -269,6 +267,7 @@ mod tests {
     #[test]
     fn test_is_active() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, IdentityRegistryContract);
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 
@@ -284,6 +283,7 @@ mod tests {
     #[test]
     fn test_deactivate_did() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, IdentityRegistryContract);
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 
@@ -300,6 +300,7 @@ mod tests {
     #[test]
     fn test_total_dids() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, IdentityRegistryContract);
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 

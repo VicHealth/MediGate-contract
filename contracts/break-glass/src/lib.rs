@@ -14,7 +14,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
+};
 
 // ============================================
 // Data Types
@@ -121,18 +123,24 @@ impl BreakGlassContract {
         };
 
         // Store the request
-        env.storage().persistent().set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
 
         // Add to patient's request list
-        let mut patient_reqs: Vec<String> = env.storage()
+        let mut patient_reqs: Vec<String> = env
+            .storage()
             .persistent()
             .get(&DataKey::PatientRequests(patient.clone()))
             .unwrap_or(Vec::new(&env));
         patient_reqs.push_back(request_id.clone());
-        env.storage().persistent().set(&DataKey::PatientRequests(patient.clone()), &patient_reqs);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PatientRequests(patient.clone()), &patient_reqs);
 
         // Add to pending list
-        let mut pending: Vec<String> = env.storage()
+        let mut pending: Vec<String> = env
+            .storage()
             .persistent()
             .get(&PENDING_LIST)
             .unwrap_or(Vec::new(&env));
@@ -163,8 +171,8 @@ impl BreakGlassContract {
     ) -> BreakGlassRequest {
         guardian.require_auth();
 
-        let mut request = Self::get_request_internal(&env, &request_id)
-            .expect("Break-Glass request not found");
+        let mut request =
+            Self::get_request_internal(&env, &request_id).expect("Break-Glass request not found");
 
         if request.status != RequestStatus::Pending {
             panic!("Request is not in Pending status");
@@ -175,7 +183,9 @@ impl BreakGlassContract {
         if now > request.requested_at + MAX_PENDING_DURATION {
             request.status = RequestStatus::Expired;
             request.resolved_at = now;
-            env.storage().persistent().set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
+            env.storage()
+                .persistent()
+                .set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
             panic!("Break-Glass request has expired");
         }
 
@@ -189,12 +199,14 @@ impl BreakGlassContract {
         request.guardian_approvals.push_back(guardian);
 
         // Check if we have enough approvals
-        if (request.guardian_approvals.len() as u32) >= request.required_approvals {
+        if request.guardian_approvals.len() >= request.required_approvals {
             request.status = RequestStatus::Approved;
             request.resolved_at = now;
         }
 
-        env.storage().persistent().set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
 
         request
     }
@@ -207,15 +219,11 @@ impl BreakGlassContract {
     ///
     /// # Panics
     /// * If request is not in Pending status
-    pub fn deny_break_glass(
-        env: Env,
-        request_id: String,
-        guardian: Address,
-    ) -> BreakGlassRequest {
+    pub fn deny_break_glass(env: Env, request_id: String, guardian: Address) -> BreakGlassRequest {
         guardian.require_auth();
 
-        let mut request = Self::get_request_internal(&env, &request_id)
-            .expect("Break-Glass request not found");
+        let mut request =
+            Self::get_request_internal(&env, &request_id).expect("Break-Glass request not found");
 
         if request.status != RequestStatus::Pending {
             panic!("Request is not in Pending status");
@@ -224,7 +232,9 @@ impl BreakGlassContract {
         request.status = RequestStatus::Denied;
         request.resolved_at = env.ledger().timestamp();
 
-        env.storage().persistent().set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
 
         request
     }
@@ -275,7 +285,9 @@ impl BreakGlassContract {
     // ============================================
 
     fn get_request_internal(env: &Env, request_id: &String) -> Option<BreakGlassRequest> {
-        env.storage().persistent().get(&DataKey::BreakGlassRequest(request_id.clone()))
+        env.storage()
+            .persistent()
+            .get(&DataKey::BreakGlassRequest(request_id.clone()))
     }
 }
 
@@ -291,6 +303,7 @@ mod tests {
     #[test]
     fn test_initiate_and_get_request() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, BreakGlassContract);
         let client = BreakGlassContractClient::new(&env, &contract_id);
 
@@ -300,14 +313,8 @@ mod tests {
         let request_id = String::from_slice(&env, "bg-001");
         let reason = String::from_slice(&env, "Patient unconscious, needs allergy info");
 
-        let request = client.initiate_break_glass(
-            &request_id,
-            &patient,
-            &requester,
-            &hospital,
-            &reason,
-            &2,
-        );
+        let request =
+            client.initiate_break_glass(&request_id, &patient, &requester, &hospital, &reason, &2);
 
         assert_eq!(request.status, RequestStatus::Pending);
         assert_eq!(request.patient, patient);
@@ -322,6 +329,7 @@ mod tests {
     #[test]
     fn test_approve_break_glass() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, BreakGlassContract);
         let client = BreakGlassContractClient::new(&env, &contract_id);
 
@@ -333,14 +341,7 @@ mod tests {
         let request_id = String::from_slice(&env, "bg-002");
         let reason = String::from_slice(&env, "Emergency surgery, need blood type");
 
-        client.initiate_break_glass(
-            &request_id,
-            &patient,
-            &requester,
-            &hospital,
-            &reason,
-            &2,
-        );
+        client.initiate_break_glass(&request_id, &patient, &requester, &hospital, &reason, &2);
 
         // First approval
         let request = client.approve_break_glass(&request_id, &guardian1);
@@ -356,6 +357,7 @@ mod tests {
     #[test]
     fn test_deny_break_glass() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, BreakGlassContract);
         let client = BreakGlassContractClient::new(&env, &contract_id);
 
@@ -366,14 +368,7 @@ mod tests {
         let request_id = String::from_slice(&env, "bg-003");
         let reason = String::from_slice(&env, "Patient unresponsive");
 
-        client.initiate_break_glass(
-            &request_id,
-            &patient,
-            &requester,
-            &hospital,
-            &reason,
-            &2,
-        );
+        client.initiate_break_glass(&request_id, &patient, &requester, &hospital, &reason, &2);
 
         let request = client.deny_break_glass(&request_id, &guardian);
         assert_eq!(request.status, RequestStatus::Denied);
@@ -382,6 +377,7 @@ mod tests {
     #[test]
     fn test_patient_requests() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, BreakGlassContract);
         let client = BreakGlassContractClient::new(&env, &contract_id);
 

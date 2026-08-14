@@ -14,7 +14,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
+};
 
 // ============================================
 // Data Types
@@ -116,26 +118,35 @@ impl AuditLoggerContract {
         };
 
         // Store the event
-        env.storage().persistent().set(&DataKey::AuditEvent(event_id.clone()), &event);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AuditEvent(event_id.clone()), &event);
 
         // Add to actor's event list
-        let mut actor_events: Vec<String> = env.storage()
+        let mut actor_events: Vec<String> = env
+            .storage()
             .persistent()
             .get(&DataKey::ActorEvents(actor.clone()))
             .unwrap_or(Vec::new(&env));
         actor_events.push_back(event_id.clone());
-        env.storage().persistent().set(&DataKey::ActorEvents(actor.clone()), &actor_events);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ActorEvents(actor.clone()), &actor_events);
 
         // Add to target's event list
-        let mut target_events: Vec<String> = env.storage()
+        let mut target_events: Vec<String> = env
+            .storage()
             .persistent()
             .get(&DataKey::TargetEvents(target.clone()))
             .unwrap_or(Vec::new(&env));
         target_events.push_back(event_id.clone());
-        env.storage().persistent().set(&DataKey::TargetEvents(target.clone()), &target_events);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TargetEvents(target.clone()), &target_events);
 
         // Add to recent events list
-        let mut recent: Vec<String> = env.storage()
+        let mut recent: Vec<String> = env
+            .storage()
             .persistent()
             .get(&RECENT_EVENTS)
             .unwrap_or(Vec::new(&env));
@@ -162,7 +173,9 @@ impl AuditLoggerContract {
     /// # Returns
     /// * `Option<AuditEvent>` - The event if found
     pub fn get_event(env: Env, event_id: String) -> Option<AuditEvent> {
-        env.storage().persistent().get(&DataKey::AuditEvent(event_id.clone()))
+        env.storage()
+            .persistent()
+            .get(&DataKey::AuditEvent(event_id.clone()))
     }
 
     /// Get all event IDs for a specific actor.
@@ -217,12 +230,11 @@ impl AuditLoggerContract {
     ///
     /// # Returns
     /// * `bool` - Whether the event exists and matches the hash
-    pub fn verify_event(
-        env: Env,
-        event_id: String,
-        expected_hash: String,
-    ) -> bool {
-        let event = env.storage().persistent().get::<_, AuditEvent>(&DataKey::AuditEvent(event_id.clone()));
+    pub fn verify_event(env: Env, event_id: String, expected_hash: String) -> bool {
+        let event = env
+            .storage()
+            .persistent()
+            .get::<_, AuditEvent>(&DataKey::AuditEvent(event_id.clone()));
         match event {
             Some(e) => e.metadata_hash == expected_hash,
             None => false,
@@ -242,6 +254,7 @@ mod tests {
     #[test]
     fn test_log_and_get_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AuditLoggerContract);
         let client = AuditLoggerContractClient::new(&env, &contract_id);
 
@@ -250,13 +263,7 @@ mod tests {
         let event_id = String::from_slice(&env, "evt-001");
         let hash = String::from_slice(&env, "abc123def456");
 
-        let event = client.log_event(
-            &event_id,
-            &EventType::AccessGranted,
-            &actor,
-            &target,
-            &hash,
-        );
+        let event = client.log_event(&event_id, &EventType::AccessGranted, &actor, &target, &hash);
 
         assert_eq!(event.event_type, EventType::AccessGranted);
         assert_eq!(event.actor, actor);
@@ -272,6 +279,7 @@ mod tests {
     #[test]
     fn test_actor_and_target_events() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AuditLoggerContract);
         let client = AuditLoggerContractClient::new(&env, &contract_id);
 
@@ -304,6 +312,7 @@ mod tests {
     #[test]
     fn test_verify_event() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AuditLoggerContract);
         let client = AuditLoggerContractClient::new(&env, &contract_id);
 
@@ -327,6 +336,7 @@ mod tests {
     #[test]
     fn test_total_events() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AuditLoggerContract);
         let client = AuditLoggerContractClient::new(&env, &contract_id);
 

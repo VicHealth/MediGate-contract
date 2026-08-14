@@ -70,11 +70,7 @@ impl AccessLogContract {
     /// # Panics
     /// * If patient_id is empty
     /// * If provider_id is empty
-    pub fn log_access(
-        env: Env,
-        patient_id: String,
-        provider_id: String,
-    ) -> AccessLogEntry {
+    pub fn log_access(env: Env, patient_id: String, provider_id: String) -> AccessLogEntry {
         if patient_id.is_empty() {
             panic!("patient_id cannot be empty");
         }
@@ -95,18 +91,24 @@ impl AccessLogContract {
         let log_id = count + 1;
 
         // Store the log entry by its numeric ID
-        env.storage().persistent().set(&DataKey::LogEntry(log_id), &entry);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LogEntry(log_id), &entry);
 
         // Add to patient's log list
-        let mut patient_logs: Vec<u64> = env.storage()
+        let mut patient_logs: Vec<u64> = env
+            .storage()
             .persistent()
             .get(&DataKey::PatientLogs(patient_id.clone()))
             .unwrap_or(Vec::new(&env));
         patient_logs.push_back(log_id);
-        env.storage().persistent().set(&DataKey::PatientLogs(patient_id.clone()), &patient_logs);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PatientLogs(patient_id.clone()), &patient_logs);
 
         // Add to recent global logs
-        let mut recent: Vec<u64> = env.storage()
+        let mut recent: Vec<u64> = env
+            .storage()
             .persistent()
             .get(&RECENT_LOGS)
             .unwrap_or(Vec::new(&env));
@@ -130,14 +132,16 @@ impl AccessLogContract {
     /// # Returns
     /// * `Vec<AccessLogEntry>` - List of all access log entries for the patient
     pub fn get_logs(env: Env, patient_id: String) -> Vec<AccessLogEntry> {
-        let log_ids: Vec<u64> = env.storage()
+        let log_ids: Vec<u64> = env
+            .storage()
             .persistent()
             .get(&DataKey::PatientLogs(patient_id.clone()))
             .unwrap_or(Vec::new(&env));
 
         let mut logs: Vec<AccessLogEntry> = Vec::new(&env);
         for id in log_ids.iter() {
-            if let Some(entry) = env.storage()
+            if let Some(entry) = env
+                .storage()
                 .persistent()
                 .get::<_, AccessLogEntry>(&DataKey::LogEntry(id))
             {
@@ -152,14 +156,16 @@ impl AccessLogContract {
     /// # Returns
     /// * `Vec<AccessLogEntry>` - List of recent access log entries
     pub fn get_recent_logs(env: Env) -> Vec<AccessLogEntry> {
-        let recent_ids: Vec<u64> = env.storage()
+        let recent_ids: Vec<u64> = env
+            .storage()
             .persistent()
             .get(&RECENT_LOGS)
             .unwrap_or(Vec::new(&env));
 
         let mut logs: Vec<AccessLogEntry> = Vec::new(&env);
         for id in recent_ids.iter() {
-            if let Some(entry) = env.storage()
+            if let Some(entry) = env
+                .storage()
                 .persistent()
                 .get::<_, AccessLogEntry>(&DataKey::LogEntry(id))
             {
@@ -185,11 +191,13 @@ impl AccessLogContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk::{testutils::Ledger as _, Env};
 
     #[test]
     fn test_log_and_get_access() {
         let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1_700_000_000);
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
@@ -210,6 +218,7 @@ mod tests {
     #[test]
     fn test_multiple_logs_for_patient() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
@@ -229,6 +238,7 @@ mod tests {
     #[test]
     fn test_get_empty_logs() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
@@ -240,6 +250,7 @@ mod tests {
     #[test]
     fn test_total_accesses() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
@@ -254,6 +265,7 @@ mod tests {
     #[test]
     fn test_get_recent_logs() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
@@ -272,6 +284,7 @@ mod tests {
     #[should_panic(expected = "patient_id cannot be empty")]
     fn test_empty_patient_id() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
@@ -285,6 +298,7 @@ mod tests {
     #[should_panic(expected = "provider_id cannot be empty")]
     fn test_empty_provider_id() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 

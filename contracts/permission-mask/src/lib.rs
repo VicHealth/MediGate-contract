@@ -14,7 +14,7 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec, Map};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 // ============================================
 // Data Types
@@ -102,11 +102,20 @@ impl PermissionMaskContract {
         };
 
         // Store using a composite key: patient + provider
-        env.storage().persistent().set(&DataKey::Permission(patient.clone(), provider.clone()), &mask);
+        env.storage().persistent().set(
+            &DataKey::Permission(patient.clone(), provider.clone()),
+            &mask,
+        );
 
         // Increment count if new
-        let count: u64 = env.storage().persistent().get(&PERMISSION_COUNT).unwrap_or(0);
-        env.storage().persistent().set(&PERMISSION_COUNT, &(count + 1));
+        let count: u64 = env
+            .storage()
+            .persistent()
+            .get(&PERMISSION_COUNT)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&PERMISSION_COUNT, &(count + 1));
 
         mask
     }
@@ -119,12 +128,10 @@ impl PermissionMaskContract {
     ///
     /// # Returns
     /// * `Option<PermissionMask>` - The permission mask if it exists
-    pub fn get_permission(
-        env: Env,
-        patient: Address,
-        provider: Address,
-    ) -> Option<PermissionMask> {
-        env.storage().persistent().get(&DataKey::Permission(patient.clone(), provider.clone()))
+    pub fn get_permission(env: Env, patient: Address, provider: Address) -> Option<PermissionMask> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Permission(patient.clone(), provider.clone()))
     }
 
     /// Check if a provider has permission for a specific data category.
@@ -142,7 +149,10 @@ impl PermissionMaskContract {
         provider: Address,
         category: DataCategory,
     ) -> bool {
-        let mask = env.storage().persistent().get::<_, PermissionMask>(&DataKey::Permission(patient.clone(), provider.clone()));
+        let mask = env
+            .storage()
+            .persistent()
+            .get::<_, PermissionMask>(&DataKey::Permission(patient.clone(), provider.clone()));
 
         match mask {
             Some(m) => m.categories.contains(&category),
@@ -167,7 +177,8 @@ impl PermissionMaskContract {
     ) -> PermissionMask {
         patient.require_auth();
 
-        let mut mask = env.storage()
+        let mut mask = env
+            .storage()
             .persistent()
             .get::<_, PermissionMask>(&DataKey::Permission(patient.clone(), provider.clone()))
             .expect("No permission mask found for this patient-provider pair");
@@ -183,7 +194,10 @@ impl PermissionMaskContract {
         mask.categories = new_categories;
         mask.updated_at = env.ledger().timestamp();
 
-        env.storage().persistent().set(&DataKey::Permission(patient.clone(), provider.clone()), &mask);
+        env.storage().persistent().set(
+            &DataKey::Permission(patient.clone(), provider.clone()),
+            &mask,
+        );
 
         mask
     }
@@ -193,19 +207,20 @@ impl PermissionMaskContract {
     /// # Arguments
     /// * `patient` - The patient's address
     /// * `provider` - The provider's address
-    pub fn revoke_all(
-        env: Env,
-        patient: Address,
-        provider: Address,
-    ) {
+    pub fn revoke_all(env: Env, patient: Address, provider: Address) {
         patient.require_auth();
 
-        env.storage().persistent().remove(&DataKey::Permission(patient.clone(), provider.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Permission(patient.clone(), provider.clone()));
     }
 
     /// Get the total number of permission masks stored.
     pub fn total_permissions(env: Env) -> u64 {
-        env.storage().persistent().get(&PERMISSION_COUNT).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&PERMISSION_COUNT)
+            .unwrap_or(0)
     }
 }
 
@@ -221,6 +236,7 @@ mod tests {
     #[test]
     fn test_set_and_get_permission() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, PermissionMaskContract);
         let client = PermissionMaskContractClient::new(&env, &contract_id);
 
@@ -246,6 +262,7 @@ mod tests {
     #[test]
     fn test_has_permission() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, PermissionMaskContract);
         let client = PermissionMaskContractClient::new(&env, &contract_id);
 
@@ -266,6 +283,7 @@ mod tests {
     #[test]
     fn test_revoke_permission() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, PermissionMaskContract);
         let client = PermissionMaskContractClient::new(&env, &contract_id);
 
@@ -290,6 +308,7 @@ mod tests {
     #[test]
     fn test_revoke_all() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, PermissionMaskContract);
         let client = PermissionMaskContractClient::new(&env, &contract_id);
 

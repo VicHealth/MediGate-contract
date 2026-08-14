@@ -14,7 +14,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec, Map};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
+};
 
 // ============================================
 // Data Types
@@ -131,23 +133,31 @@ impl AccessKeyManagerContract {
         };
 
         // Store the key
-        env.storage().persistent().set(&DataKey::AccessKey(key_id.clone()), &key);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccessKey(key_id.clone()), &key);
 
         // Add to patient's key list
-        let mut patient_keys: Vec<String> = env.storage()
+        let mut patient_keys: Vec<String> = env
+            .storage()
             .persistent()
             .get(&DataKey::PatientKeys(patient.clone()))
             .unwrap_or(Vec::new(&env));
         patient_keys.push_back(key_id.clone());
-        env.storage().persistent().set(&DataKey::PatientKeys(patient.clone()), &patient_keys);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PatientKeys(patient.clone()), &patient_keys);
 
         // Add to provider's key list
-        let mut provider_keys: Vec<String> = env.storage()
+        let mut provider_keys: Vec<String> = env
+            .storage()
             .persistent()
             .get(&DataKey::ProviderKeys(provider.clone()))
             .unwrap_or(Vec::new(&env));
         provider_keys.push_back(key_id.clone());
-        env.storage().persistent().set(&DataKey::ProviderKeys(provider.clone()), &provider_keys);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProviderKeys(provider.clone()), &provider_keys);
 
         // Increment key count
         let count: u64 = env.storage().persistent().get(&KEY_COUNT).unwrap_or(0);
@@ -161,15 +171,10 @@ impl AccessKeyManagerContract {
     /// # Arguments
     /// * `key_id` - The key to revoke
     /// * `caller` - The address requesting revocation (must be the patient)
-    pub fn revoke_access(
-        env: Env,
-        key_id: String,
-        caller: Address,
-    ) -> AccessKey {
+    pub fn revoke_access(env: Env, key_id: String, caller: Address) -> AccessKey {
         caller.require_auth();
 
-        let mut key = Self::get_key_internal(&env, &key_id)
-            .expect("Access key not found");
+        let mut key = Self::get_key_internal(&env, &key_id).expect("Access key not found");
 
         if key.patient != caller {
             panic!("Only the patient who issued the key can revoke it");
@@ -180,7 +185,9 @@ impl AccessKeyManagerContract {
         }
 
         key.status = KeyStatus::Revoked;
-        env.storage().persistent().set(&DataKey::AccessKey(key_id.clone()), &key);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccessKey(key_id.clone()), &key);
 
         key
     }
@@ -194,11 +201,7 @@ impl AccessKeyManagerContract {
     ///
     /// # Returns
     /// * `bool` - Whether the key is valid for the given category
-    pub fn validate_key(
-        env: Env,
-        key_id: String,
-        category: DataCategory,
-    ) -> bool {
+    pub fn validate_key(env: Env, key_id: String, category: DataCategory) -> bool {
         let key = match Self::get_key_internal(&env, &key_id) {
             Some(k) => k,
             None => return false,
@@ -215,7 +218,9 @@ impl AccessKeyManagerContract {
             // Auto-expire the key
             let mut expired_key = key;
             expired_key.status = KeyStatus::Expired;
-            env.storage().persistent().set(&DataKey::AccessKey(key_id.clone()), &expired_key);
+            env.storage()
+                .persistent()
+                .set(&DataKey::AccessKey(key_id.clone()), &expired_key);
             return false;
         }
 
@@ -272,7 +277,9 @@ impl AccessKeyManagerContract {
     // ============================================
 
     fn get_key_internal(env: &Env, key_id: &String) -> Option<AccessKey> {
-        env.storage().persistent().get(&DataKey::AccessKey(key_id.clone()))
+        env.storage()
+            .persistent()
+            .get(&DataKey::AccessKey(key_id.clone()))
     }
 }
 
@@ -288,6 +295,7 @@ mod tests {
     #[test]
     fn test_grant_and_validate_key() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessKeyManagerContract);
         let client = AccessKeyManagerContractClient::new(&env, &contract_id);
 
@@ -314,6 +322,7 @@ mod tests {
     #[test]
     fn test_revoke_key() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessKeyManagerContract);
         let client = AccessKeyManagerContractClient::new(&env, &contract_id);
 
@@ -334,6 +343,7 @@ mod tests {
     #[test]
     fn test_patient_and_provider_keys() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessKeyManagerContract);
         let client = AccessKeyManagerContractClient::new(&env, &contract_id);
 
@@ -369,6 +379,7 @@ mod tests {
     #[test]
     fn test_total_keys() {
         let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register_contract(None, AccessKeyManagerContract);
         let client = AccessKeyManagerContractClient::new(&env, &contract_id);
 
