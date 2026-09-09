@@ -13,6 +13,7 @@
 //! - `get_pending_requests`: List all pending requests
 
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
@@ -46,6 +47,18 @@ pub struct BreakGlassRequest {
     pub resolved_at: u64,
     pub guardian_approvals: Vec<Address>,
     pub required_approvals: u32,
+    pub is_high_risk: bool,
+    pub clinical_cosigners: Vec<Address>,
+}
+
+/// Structured event emitted when an emergency escalation break-glass is initiated
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct EmergencyEscalationTriggered {
+    pub request_id: String,
+    pub patient: Address,
+    pub requester: Address,
+    pub is_high_risk: bool,
 }
 
 // ============================================
@@ -63,8 +76,8 @@ pub enum DataKey {
 const PENDING_LIST: Symbol = symbol_short!("PENDING");
 const REQUEST_COUNT: Symbol = symbol_short!("BG_CNT");
 
-// Maximum time a request can stay pending (1 hour)
-const MAX_PENDING_DURATION: u64 = 3600;
+// Maximum time a request can stay pending (4 hours = 14,400s)
+const MAX_PENDING_DURATION: u64 = 14400;
 
 // ============================================
 // Contract
@@ -84,6 +97,7 @@ impl BreakGlassContract {
     /// * `hospital` - The hospital making the request
     /// * `reason` - Reason for the emergency access
     /// * `required_approvals` - Number of guardian approvals required (default: 2)
+    /// * `is_high_risk` - Whether this request accesses high-risk records requiring clinical co-signature
     ///
     /// # Panics
     /// * If reason is empty
@@ -96,6 +110,7 @@ impl BreakGlassContract {
         hospital: Address,
         reason: String,
         required_approvals: u32,
+        is_high_risk: bool,
     ) -> BreakGlassRequest {
         requester.require_auth();
 
@@ -120,6 +135,8 @@ impl BreakGlassContract {
             resolved_at: 0,
             guardian_approvals: Vec::new(&env),
             required_approvals,
+            is_high_risk,
+            clinical_cosigners: Vec::new(&env),
         };
 
         // Store the request
@@ -150,6 +167,21 @@ impl BreakGlassContract {
         // Increment count
         let count: u64 = env.storage().persistent().get(&REQUEST_COUNT).unwrap_or(0);
         env.storage().persistent().set(&REQUEST_COUNT, &(count + 1));
+
+        // Emit structured emergency escalation event
+        env.events().publish(
+            (
+                symbol_short!("EmergEsc"),
+                patient.clone(),
+                requester.clone(),
+            ),
+            EmergencyEscalationTriggered {
+                request_id: request_id.clone(),
+                patient: patient.clone(),
+                requester: requester.clone(),
+                is_high_risk,
+            },
+        );
 
         request
     }
@@ -200,6 +232,73 @@ impl BreakGlassContract {
 
         // Check if we have enough approvals
         if request.guardian_approvals.len() >= request.required_approvals {
+            // For high-risk records, require clinical co-signer approval as well
+            if !request.is_high_risk || !request.clinical_cosigners.is_empty() {
+                request.status = RequestStatus::Approved;
+                request.resolved_at = now;
+            }
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
+
+        request
+    }
+
+    /// Clinical co-signature for high-risk Break-Glass requests (e.g. department chief).
+    ///
+    /// # Arguments
+    /// * `request_id` - The request to cosign
+    /// * `cosigner` - The clinical authority co-signing the emergency override
+    ///
+    /// # Panics
+    /// * If request is not in Pending status
+    /// * If request is not marked as high-risk
+    /// * If cosigner has already co-signed
+    /// * If request has expired
+    pub fn cosign_break_glass(
+        env: Env,
+        request_id: String,
+        cosigner: Address,
+    ) -> BreakGlassRequest {
+        cosigner.require_auth();
+
+        let mut request =
+            Self::get_request_internal(&env, &request_id).expect("Break-Glass request not found");
+
+        if request.status != RequestStatus::Pending {
+            panic!("Request is not in Pending status");
+        }
+
+        if !request.is_high_risk {
+            panic!("Request is not high-risk");
+        }
+
+        // Check if request has expired
+        let now = env.ledger().timestamp();
+        if now > request.requested_at + MAX_PENDING_DURATION {
+            request.status = RequestStatus::Expired;
+            request.resolved_at = now;
+            env.storage()
+                .persistent()
+                .set(&DataKey::BreakGlassRequest(request_id.clone()), &request);
+            panic!("Break-Glass request has expired");
+        }
+
+        // Check if cosigner already signed
+        for existing in request.clinical_cosigners.iter() {
+            if existing == cosigner {
+                panic!("Cosigner has already cosigned this request");
+            }
+        }
+
+        request.clinical_cosigners.push_back(cosigner);
+
+        // Check if all conditions met (guardians + clinical cosigner)
+        if request.guardian_approvals.len() >= request.required_approvals
+            && !request.clinical_cosigners.is_empty()
+        {
             request.status = RequestStatus::Approved;
             request.resolved_at = now;
         }
@@ -298,7 +397,10 @@ impl BreakGlassContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     #[test]
     fn test_initiate_and_get_request() {
@@ -310,15 +412,23 @@ mod tests {
         let patient = Address::generate(&env);
         let requester = Address::generate(&env);
         let hospital = Address::generate(&env);
-        let request_id = String::from_slice(&env, "bg-001");
-        let reason = String::from_slice(&env, "Patient unconscious, needs allergy info");
+        let request_id = String::from_str(&env, "bg-001");
+        let reason = String::from_str(&env, "Patient unconscious, needs allergy info");
 
-        let request =
-            client.initiate_break_glass(&request_id, &patient, &requester, &hospital, &reason, &2);
+        let request = client.initiate_break_glass(
+            &request_id,
+            &patient,
+            &requester,
+            &hospital,
+            &reason,
+            &2,
+            &false,
+        );
 
         assert_eq!(request.status, RequestStatus::Pending);
         assert_eq!(request.patient, patient);
         assert_eq!(request.requester, requester);
+        assert!(!request.is_high_risk);
 
         // Retrieve
         let retrieved = client.get_request(&request_id);
@@ -338,10 +448,18 @@ mod tests {
         let hospital = Address::generate(&env);
         let guardian1 = Address::generate(&env);
         let guardian2 = Address::generate(&env);
-        let request_id = String::from_slice(&env, "bg-002");
-        let reason = String::from_slice(&env, "Emergency surgery, need blood type");
+        let request_id = String::from_str(&env, "bg-002");
+        let reason = String::from_str(&env, "Emergency surgery, need blood type");
 
-        client.initiate_break_glass(&request_id, &patient, &requester, &hospital, &reason, &2);
+        client.initiate_break_glass(
+            &request_id,
+            &patient,
+            &requester,
+            &hospital,
+            &reason,
+            &2,
+            &false,
+        );
 
         // First approval
         let request = client.approve_break_glass(&request_id, &guardian1);
@@ -365,10 +483,18 @@ mod tests {
         let requester = Address::generate(&env);
         let hospital = Address::generate(&env);
         let guardian = Address::generate(&env);
-        let request_id = String::from_slice(&env, "bg-003");
-        let reason = String::from_slice(&env, "Patient unresponsive");
+        let request_id = String::from_str(&env, "bg-003");
+        let reason = String::from_str(&env, "Patient unresponsive");
 
-        client.initiate_break_glass(&request_id, &patient, &requester, &hospital, &reason, &2);
+        client.initiate_break_glass(
+            &request_id,
+            &patient,
+            &requester,
+            &hospital,
+            &reason,
+            &2,
+            &false,
+        );
 
         let request = client.deny_break_glass(&request_id, &guardian);
         assert_eq!(request.status, RequestStatus::Denied);
@@ -386,23 +512,96 @@ mod tests {
         let hospital = Address::generate(&env);
 
         client.initiate_break_glass(
-            &String::from_slice(&env, "bg-a"),
+            &String::from_str(&env, "bg-a"),
             &patient,
             &requester,
             &hospital,
-            &String::from_slice(&env, "Reason 1"),
+            &String::from_str(&env, "Reason 1"),
             &2,
+            &false,
         );
         client.initiate_break_glass(
-            &String::from_slice(&env, "bg-b"),
+            &String::from_str(&env, "bg-b"),
             &patient,
             &requester,
             &hospital,
-            &String::from_slice(&env, "Reason 2"),
+            &String::from_str(&env, "Reason 2"),
             &2,
+            &false,
         );
 
         let patient_reqs = client.get_patient_requests(&patient);
         assert_eq!(patient_reqs.len(), 2);
+    }
+
+    #[test]
+    fn test_high_risk_break_glass_multisig() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, BreakGlassContract);
+        let client = BreakGlassContractClient::new(&env, &contract_id);
+
+        let patient = Address::generate(&env);
+        let requester = Address::generate(&env);
+        let hospital = Address::generate(&env);
+        let guardian = Address::generate(&env);
+        let chief_physician = Address::generate(&env);
+        let request_id = String::from_str(&env, "bg-psych-01");
+        let reason = String::from_str(&env, "Acute psychiatric emergency evaluation");
+
+        // Initiate high-risk request
+        let req = client.initiate_break_glass(
+            &request_id,
+            &patient,
+            &requester,
+            &hospital,
+            &reason,
+            &1,
+            &true, // is_high_risk
+        );
+        assert!(req.is_high_risk);
+
+        // Guardian approves first
+        let req_after_guardian = client.approve_break_glass(&request_id, &guardian);
+        // Despite having 1/1 guardian approvals, still Pending because high-risk requires clinical co-signer
+        assert_eq!(req_after_guardian.status, RequestStatus::Pending);
+
+        // Department chief co-signs
+        let req_after_cosign = client.cosign_break_glass(&request_id, &chief_physician);
+        assert_eq!(req_after_cosign.status, RequestStatus::Approved);
+        assert_eq!(req_after_cosign.clinical_cosigners.len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Break-Glass request has expired")]
+    fn test_timelock_auto_expiration() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, BreakGlassContract);
+        let client = BreakGlassContractClient::new(&env, &contract_id);
+
+        let patient = Address::generate(&env);
+        let requester = Address::generate(&env);
+        let hospital = Address::generate(&env);
+        let guardian = Address::generate(&env);
+        let request_id = String::from_str(&env, "bg-exp-01");
+        let reason = String::from_str(&env, "Unconscious patient in triage");
+
+        // Initiated at t = 0
+        client.initiate_break_glass(
+            &request_id,
+            &patient,
+            &requester,
+            &hospital,
+            &reason,
+            &1,
+            &false,
+        );
+
+        // Advance ledger timestamp beyond 4 hours (14,400 seconds)
+        env.ledger().set_timestamp(14401);
+
+        // Guardian approval after expiration strictly panics/reverts
+        client.approve_break_glass(&request_id, &guardian);
     }
 }

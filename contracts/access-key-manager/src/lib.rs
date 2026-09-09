@@ -71,9 +71,19 @@ pub enum DataKey {
     AccessKey(String),
     PatientKeys(Address),
     ProviderKeys(Address),
+    GuardianDelegate(Address),
 }
 
 const KEY_COUNT: Symbol = symbol_short!("KEY_COUNT");
+
+/// Structured event emitted when an access key is revoked
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct KeyRevoked {
+    pub key_id: String,
+    pub patient: Address,
+    pub caller: Address,
+}
 
 // ============================================
 // Contract
@@ -166,18 +176,126 @@ impl AccessKeyManagerContract {
         key
     }
 
-    /// Revoke an active access key.
+    /// Assign a proxy guardian delegate authorized to manage healthcare access permissions on behalf of a patient.
+    ///
+    /// # Arguments
+    /// * `patient` - The patient establishing delegation
+    /// * `delegate` - The authorized guardian or family proxy address
+    pub fn set_guardian_delegate(env: Env, patient: Address, delegate: Address) {
+        patient.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::GuardianDelegate(patient), &delegate);
+    }
+
+    /// Retrieve the assigned guardian delegate for a patient.
+    pub fn get_guardian_delegate(env: Env, patient: Address) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::GuardianDelegate(patient))
+    }
+
+    /// Remove an assigned guardian delegate for a patient.
+    pub fn remove_guardian_delegate(env: Env, patient: Address) {
+        patient.require_auth();
+        env.storage()
+            .persistent()
+            .remove(&DataKey::GuardianDelegate(patient));
+    }
+
+    /// Grant access on behalf of an incapacitated patient via an authorized guardian delegate.
+    pub fn grant_access_delegated(
+        env: Env,
+        key_id: String,
+        patient: Address,
+        delegate: Address,
+        provider: Address,
+        permission_mask: Vec<DataCategory>,
+        ttl: u64,
+    ) -> AccessKey {
+        delegate.require_auth();
+
+        let assigned = Self::get_guardian_delegate(env.clone(), patient.clone())
+            .expect("No guardian delegate assigned for patient");
+        if assigned != delegate {
+            panic!("Caller is not the authorized guardian delegate for this patient");
+        }
+
+        if ttl < 300 {
+            panic!("TTL must be at least 300 seconds (5 minutes)");
+        }
+        if ttl > 31_536_000 {
+            panic!("TTL cannot exceed 31,536,000 seconds (1 year)");
+        }
+        if permission_mask.is_empty() {
+            panic!("Permission mask cannot be empty");
+        }
+
+        let now = env.ledger().timestamp();
+        let expires_at = now + ttl;
+
+        let key = AccessKey {
+            id: key_id.clone(),
+            patient: patient.clone(),
+            provider: provider.clone(),
+            permission_mask: permission_mask.clone(),
+            issued_at: now,
+            expires_at,
+            status: KeyStatus::Active,
+        };
+
+        // Store the key
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccessKey(key_id.clone()), &key);
+
+        // Add to patient's key list
+        let mut patient_keys: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PatientKeys(patient.clone()))
+            .unwrap_or(Vec::new(&env));
+        patient_keys.push_back(key_id.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::PatientKeys(patient.clone()), &patient_keys);
+
+        // Add to provider's key list
+        let mut provider_keys: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProviderKeys(provider.clone()))
+            .unwrap_or(Vec::new(&env));
+        provider_keys.push_back(key_id.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProviderKeys(provider.clone()), &provider_keys);
+
+        // Increment key count
+        let count: u64 = env.storage().persistent().get(&KEY_COUNT).unwrap_or(0);
+        env.storage().persistent().set(&KEY_COUNT, &(count + 1));
+
+        key
+    }
+
+    /// Revoke an active access key. Caller can be the patient or the patient's registered guardian delegate.
     ///
     /// # Arguments
     /// * `key_id` - The key to revoke
-    /// * `caller` - The address requesting revocation (must be the patient)
+    /// * `caller` - The address requesting revocation (patient or registered guardian)
     pub fn revoke_access(env: Env, key_id: String, caller: Address) -> AccessKey {
         caller.require_auth();
 
         let mut key = Self::get_key_internal(&env, &key_id).expect("Access key not found");
 
-        if key.patient != caller {
-            panic!("Only the patient who issued the key can revoke it");
+        let is_patient = key.patient == caller;
+        let is_guardian = match Self::get_guardian_delegate(env.clone(), key.patient.clone()) {
+            Some(g) => g == caller,
+            None => false,
+        };
+
+        if !is_patient && !is_guardian {
+            panic!("Only the patient or registered guardian delegate can revoke this key");
         }
 
         if key.status != KeyStatus::Active {
@@ -188,6 +306,20 @@ impl AccessKeyManagerContract {
         env.storage()
             .persistent()
             .set(&DataKey::AccessKey(key_id.clone()), &key);
+
+        // Emit structured KeyRevoked event
+        env.events().publish(
+            (
+                symbol_short!("KeyRevok"),
+                key.patient.clone(),
+                caller.clone(),
+            ),
+            KeyRevoked {
+                key_id: key_id.clone(),
+                patient: key.patient.clone(),
+                caller: caller.clone(),
+            },
+        );
 
         key
     }
@@ -301,7 +433,7 @@ mod tests {
 
         let patient = Address::generate(&env);
         let provider = Address::generate(&env);
-        let key_id = String::from_slice(&env, "key-001");
+        let key_id = String::from_str(&env, "key-001");
 
         let mut mask = Vec::new(&env);
         mask.push_back(DataCategory::Allergies);
@@ -328,7 +460,7 @@ mod tests {
 
         let patient = Address::generate(&env);
         let provider = Address::generate(&env);
-        let key_id = String::from_slice(&env, "key-002");
+        let key_id = String::from_str(&env, "key-002");
 
         let mut mask = Vec::new(&env);
         mask.push_back(DataCategory::Vitals);
@@ -355,14 +487,14 @@ mod tests {
         mask.push_back(DataCategory::Allergies);
 
         client.grant_access(
-            &String::from_slice(&env, "key-a"),
+            &String::from_str(&env, "key-a"),
             &patient,
             &provider1,
             &mask,
             &3600,
         );
         client.grant_access(
-            &String::from_slice(&env, "key-b"),
+            &String::from_str(&env, "key-b"),
             &patient,
             &provider2,
             &mask,
@@ -391,12 +523,49 @@ mod tests {
         mask.push_back(DataCategory::Allergies);
 
         client.grant_access(
-            &String::from_slice(&env, "key-1"),
+            &String::from_str(&env, "key-1"),
             &patient,
             &provider,
             &mask,
             &3600,
         );
         assert_eq!(client.total_keys(), 1);
+    }
+
+    #[test]
+    fn test_guardian_delegation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, AccessKeyManagerContract);
+        let client = AccessKeyManagerContractClient::new(&env, &contract_id);
+
+        let patient = Address::generate(&env);
+        let guardian = Address::generate(&env);
+        let provider = Address::generate(&env);
+
+        // Assign guardian delegate
+        client.set_guardian_delegate(&patient, &guardian);
+        assert_eq!(
+            client.get_guardian_delegate(&patient),
+            Some(guardian.clone())
+        );
+
+        // Guardian issues delegated key on patient's behalf
+        let key_id = String::from_str(&env, "key-delegated-1");
+        let mut mask = Vec::new(&env);
+        mask.push_back(DataCategory::Medications);
+
+        let key =
+            client.grant_access_delegated(&key_id, &patient, &guardian, &provider, &mask, &7200);
+        assert_eq!(key.patient, patient);
+        assert_eq!(key.status, KeyStatus::Active);
+
+        // Guardian can also revoke the key
+        let revoked = client.revoke_access(&key_id, &guardian);
+        assert_eq!(revoked.status, KeyStatus::Revoked);
+
+        // Remove guardian delegate
+        client.remove_guardian_delegate(&patient);
+        assert_eq!(client.get_guardian_delegate(&patient), None);
     }
 }

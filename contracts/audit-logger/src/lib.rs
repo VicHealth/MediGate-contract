@@ -61,6 +61,7 @@ pub enum DataKey {
     AuditEvent(String),
     ActorEvents(Address),
     TargetEvents(Address),
+    EpochEvents(u64),
 }
 
 const RECENT_EVENTS: Symbol = symbol_short!("RECENT");
@@ -68,6 +69,8 @@ const EVENT_COUNT: Symbol = symbol_short!("EVT_CNT");
 
 // Maximum number of recent events to store
 const MAX_RECENT_EVENTS: u32 = 100;
+// Maximum number of entity-specific events to retain in circular buffer
+const MAX_ENTITY_EVENTS: u32 = 50;
 
 // ============================================
 // Contract
@@ -122,27 +125,48 @@ impl AuditLoggerContract {
             .persistent()
             .set(&DataKey::AuditEvent(event_id.clone()), &event);
 
-        // Add to actor's event list
+        // Add to actor's event list with ring-buffer capping
         let mut actor_events: Vec<String> = env
             .storage()
             .persistent()
             .get(&DataKey::ActorEvents(actor.clone()))
             .unwrap_or(Vec::new(&env));
         actor_events.push_back(event_id.clone());
+        while actor_events.len() > MAX_ENTITY_EVENTS {
+            actor_events.remove(0);
+        }
         env.storage()
             .persistent()
             .set(&DataKey::ActorEvents(actor.clone()), &actor_events);
 
-        // Add to target's event list
+        // Add to target's event list with ring-buffer capping
         let mut target_events: Vec<String> = env
             .storage()
             .persistent()
             .get(&DataKey::TargetEvents(target.clone()))
             .unwrap_or(Vec::new(&env));
         target_events.push_back(event_id.clone());
+        while target_events.len() > MAX_ENTITY_EVENTS {
+            target_events.remove(0);
+        }
         env.storage()
             .persistent()
             .set(&DataKey::TargetEvents(target.clone()), &target_events);
+
+        // Daily epoch partition key (86,400 seconds per day)
+        let epoch_day = timestamp / 86400;
+        let mut epoch_events: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EpochEvents(epoch_day))
+            .unwrap_or(Vec::new(&env));
+        epoch_events.push_back(event_id.clone());
+        while epoch_events.len() > MAX_RECENT_EVENTS {
+            epoch_events.remove(0);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::EpochEvents(epoch_day), &epoch_events);
 
         // Add to recent events list
         let mut recent: Vec<String> = env
@@ -178,7 +202,22 @@ impl AuditLoggerContract {
             .get(&DataKey::AuditEvent(event_id.clone()))
     }
 
-    /// Get all event IDs for a specific actor.
+    /// Batch retrieve multiple audit events by their IDs.
+    ///
+    /// # Arguments
+    /// * `event_ids` - The list of event IDs to fetch
+    ///
+    /// # Returns
+    /// * `Vec<Option<AuditEvent>>` - Ordered list of results matching the requested IDs
+    pub fn get_events_batch(env: Env, event_ids: Vec<String>) -> Vec<Option<AuditEvent>> {
+        let mut results = Vec::new(&env);
+        for id in event_ids.iter() {
+            results.push_back(env.storage().persistent().get(&DataKey::AuditEvent(id)));
+        }
+        results
+    }
+
+    /// Get all event IDs for a specific actor (bounded by MAX_ENTITY_EVENTS ring buffer).
     ///
     /// # Arguments
     /// * `actor` - The address that performed actions
@@ -192,7 +231,7 @@ impl AuditLoggerContract {
             .unwrap_or(Vec::new(&env))
     }
 
-    /// Get all event IDs for a specific target.
+    /// Get all event IDs for a specific target (bounded by MAX_ENTITY_EVENTS ring buffer).
     ///
     /// # Arguments
     /// * `target` - The address that was acted upon
@@ -203,6 +242,20 @@ impl AuditLoggerContract {
         env.storage()
             .persistent()
             .get(&DataKey::TargetEvents(target.clone()))
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Get event IDs logged within a specific daily epoch partition.
+    ///
+    /// # Arguments
+    /// * `epoch_day` - Unix timestamp divided by 86,400 (day number)
+    ///
+    /// # Returns
+    /// * `Vec<String>` - List of event IDs for that day
+    pub fn get_epoch_events(env: Env, epoch_day: u64) -> Vec<String> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EpochEvents(epoch_day))
             .unwrap_or(Vec::new(&env))
     }
 
@@ -249,7 +302,10 @@ impl AuditLoggerContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env,
+    };
 
     #[test]
     fn test_log_and_get_event() {
@@ -260,8 +316,8 @@ mod tests {
 
         let actor = Address::generate(&env);
         let target = Address::generate(&env);
-        let event_id = String::from_slice(&env, "evt-001");
-        let hash = String::from_slice(&env, "abc123def456");
+        let event_id = String::from_str(&env, "evt-001");
+        let hash = String::from_str(&env, "abc123def456");
 
         let event = client.log_event(&event_id, &EventType::AccessGranted, &actor, &target, &hash);
 
@@ -288,18 +344,18 @@ mod tests {
         let target2 = Address::generate(&env);
 
         client.log_event(
-            &String::from_slice(&env, "evt-a"),
+            &String::from_str(&env, "evt-a"),
             &EventType::KeyGranted,
             &actor,
             &target1,
-            &String::from_slice(&env, "hash1"),
+            &String::from_str(&env, "hash1"),
         );
         client.log_event(
-            &String::from_slice(&env, "evt-b"),
+            &String::from_str(&env, "evt-b"),
             &EventType::DataViewed,
             &actor,
             &target2,
-            &String::from_slice(&env, "hash2"),
+            &String::from_str(&env, "hash2"),
         );
 
         let actor_events = client.get_actor_events(&actor);
@@ -318,8 +374,8 @@ mod tests {
 
         let actor = Address::generate(&env);
         let target = Address::generate(&env);
-        let event_id = String::from_slice(&env, "evt-verify");
-        let hash = String::from_slice(&env, "correct-hash");
+        let event_id = String::from_str(&env, "evt-verify");
+        let hash = String::from_str(&env, "correct-hash");
 
         client.log_event(
             &event_id,
@@ -329,8 +385,8 @@ mod tests {
             &hash,
         );
 
-        assert!(client.verify_event(&event_id, &String::from_slice(&env, "correct-hash")));
-        assert!(!client.verify_event(&event_id, &String::from_slice(&env, "wrong-hash")));
+        assert!(client.verify_event(&event_id, &String::from_str(&env, "correct-hash")));
+        assert!(!client.verify_event(&event_id, &String::from_str(&env, "wrong-hash")));
     }
 
     #[test]
@@ -346,21 +402,76 @@ mod tests {
         let target = Address::generate(&env);
 
         client.log_event(
-            &String::from_slice(&env, "e1"),
+            &String::from_str(&env, "e1"),
             &EventType::KeyGranted,
             &actor,
             &target,
-            &String::from_slice(&env, "h1"),
+            &String::from_str(&env, "h1"),
         );
         assert_eq!(client.total_events(), 1);
 
         client.log_event(
-            &String::from_slice(&env, "e2"),
+            &String::from_str(&env, "e2"),
             &EventType::KeyRevoked,
             &actor,
             &target,
-            &String::from_slice(&env, "h2"),
+            &String::from_str(&env, "h2"),
         );
         assert_eq!(client.total_events(), 2);
+    }
+
+    #[test]
+    fn test_ring_buffer_pruning_and_epoch_partitioning() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1700000000); // Day: 1700000000 / 86400 = 19675
+        let contract_id = env.register_contract(None, AuditLoggerContract);
+        let client = AuditLoggerContractClient::new(&env, &contract_id);
+
+        let actor = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        // Log 55 events for the same actor (MAX_ENTITY_EVENTS = 50)
+        for i in 0..55 {
+            let mut buf = [0u8; 10];
+            let id_str = match i {
+                0..=9 => {
+                    buf[0] = b'e';
+                    buf[1] = b'0' + i as u8;
+                    core::str::from_utf8(&buf[0..2]).unwrap()
+                }
+                _ => {
+                    buf[0] = b'e';
+                    buf[1] = b'0' + (i / 10) as u8;
+                    buf[2] = b'0' + (i % 10) as u8;
+                    core::str::from_utf8(&buf[0..3]).unwrap()
+                }
+            };
+            let event_id = String::from_str(&env, id_str);
+            client.log_event(
+                &event_id,
+                &EventType::DataViewed,
+                &actor,
+                &target,
+                &String::from_str(&env, "hash"),
+            );
+        }
+
+        // Bounded to 50 events
+        let actor_events = client.get_actor_events(&actor);
+        assert_eq!(actor_events.len(), 50);
+
+        // Epoch events check
+        let epoch_events = client.get_epoch_events(&(1700000000 / 86400));
+        assert_eq!(epoch_events.len(), 55);
+
+        // Batch retrieval check
+        let mut query_batch = soroban_sdk::Vec::new(&env);
+        query_batch.push_back(String::from_str(&env, "e50"));
+        query_batch.push_back(String::from_str(&env, "non_existent"));
+        let batch_res = client.get_events_batch(&query_batch);
+        assert_eq!(batch_res.len(), 2);
+        assert!(batch_res.get(0).unwrap().is_some());
+        assert!(batch_res.get(1).unwrap().is_none());
     }
 }

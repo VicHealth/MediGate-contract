@@ -48,6 +48,19 @@ pub struct PermissionMask {
 }
 
 // ============================================
+// Bitwise Permission Masks
+// ============================================
+
+pub const MASK_LABS: u32 = 0b0000_0001; // 1
+pub const MASK_VITALS: u32 = 0b0000_0010; // 2
+pub const MASK_BILLING: u32 = 0b0000_0100; // 4
+pub const MASK_CLINICAL: u32 = 0b0000_1000; // 8
+pub const MASK_ALLERGIES: u32 = 0b0001_0000; // 16
+pub const MASK_MEDICATIONS: u32 = 0b0010_0000; // 32
+pub const MASK_RADIOLOGY: u32 = 0b0100_0000; // 64
+pub const MASK_MENTAL_HEALTH: u32 = 0b1000_0000; // 128
+
+// ============================================
 // Storage Keys
 // ============================================
 
@@ -56,6 +69,7 @@ pub struct PermissionMask {
 #[contracttype]
 pub enum DataKey {
     Permission(Address, Address),
+    BitwisePermission(Address, Address),
 }
 
 const PERMISSION_COUNT: Symbol = symbol_short!("PERM_CNT");
@@ -160,6 +174,86 @@ impl PermissionMaskContract {
         }
     }
 
+    /// Set bitwise permission mask directly for a patient-provider pair.
+    pub fn set_bitwise_mask(env: Env, patient: Address, provider: Address, mask: u32) -> u32 {
+        patient.require_auth();
+        env.storage().persistent().set(
+            &DataKey::BitwisePermission(patient.clone(), provider.clone()),
+            &mask,
+        );
+        mask
+    }
+
+    /// Get bitwise permission mask for a patient-provider pair.
+    pub fn get_bitwise_mask(env: Env, patient: Address, provider: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::BitwisePermission(patient, provider))
+            .unwrap_or(0)
+    }
+
+    /// Check if a provider has the specified bitwise permission mask for a patient.
+    /// Returns true if all bits in `required_mask` are present in the provider's mask.
+    pub fn has_bitwise_permission(
+        env: Env,
+        patient: Address,
+        provider: Address,
+        required_mask: u32,
+    ) -> bool {
+        let current_mask: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BitwisePermission(patient, provider))
+            .unwrap_or(0);
+        (current_mask & required_mask) == required_mask
+    }
+
+    /// Add permission bits to an existing bitwise mask using bitwise OR.
+    pub fn add_bitwise_permission(
+        env: Env,
+        patient: Address,
+        provider: Address,
+        mask_to_add: u32,
+    ) -> u32 {
+        patient.require_auth();
+        let current_mask: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BitwisePermission(
+                patient.clone(),
+                provider.clone(),
+            ))
+            .unwrap_or(0);
+        let new_mask = current_mask | mask_to_add;
+        env.storage()
+            .persistent()
+            .set(&DataKey::BitwisePermission(patient, provider), &new_mask);
+        new_mask
+    }
+
+    /// Remove permission bits from an existing bitwise mask using bitwise AND NOT.
+    pub fn remove_bitwise_permission(
+        env: Env,
+        patient: Address,
+        provider: Address,
+        mask_to_remove: u32,
+    ) -> u32 {
+        patient.require_auth();
+        let current_mask: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BitwisePermission(
+                patient.clone(),
+                provider.clone(),
+            ))
+            .unwrap_or(0);
+        let new_mask = current_mask & !mask_to_remove;
+        env.storage()
+            .persistent()
+            .set(&DataKey::BitwisePermission(patient, provider), &new_mask);
+        new_mask
+    }
+
     /// Remove a specific category from a permission mask.
     ///
     /// # Arguments
@@ -213,6 +307,9 @@ impl PermissionMaskContract {
         env.storage()
             .persistent()
             .remove(&DataKey::Permission(patient.clone(), provider.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::BitwisePermission(patient, provider));
     }
 
     /// Get the total number of permission masks stored.
@@ -323,5 +420,45 @@ mod tests {
 
         client.revoke_all(&patient, &provider);
         assert!(client.get_permission(&patient, &provider).is_none());
+    }
+
+    #[test]
+    fn test_bitwise_permission_operations() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, PermissionMaskContract);
+        let client = PermissionMaskContractClient::new(&env, &contract_id);
+
+        let patient = Address::generate(&env);
+        let provider = Address::generate(&env);
+
+        // Initially zero mask
+        assert_eq!(client.get_bitwise_mask(&patient, &provider), 0);
+        assert!(!client.has_bitwise_permission(&patient, &provider, &MASK_LABS));
+
+        // Set mask: Labs (1) + Vitals (2) = 3
+        let initial_mask = MASK_LABS | MASK_VITALS;
+        let mask = client.set_bitwise_mask(&patient, &provider, &initial_mask);
+        assert_eq!(mask, 3);
+        assert!(client.has_bitwise_permission(&patient, &provider, &MASK_LABS));
+        assert!(client.has_bitwise_permission(&patient, &provider, &MASK_VITALS));
+        assert!(client.has_bitwise_permission(&patient, &provider, &(MASK_LABS | MASK_VITALS)));
+        assert!(!client.has_bitwise_permission(&patient, &provider, &MASK_CLINICAL));
+
+        // Add Clinical notes (8)
+        let mask_after_add = client.add_bitwise_permission(&patient, &provider, &MASK_CLINICAL);
+        assert_eq!(mask_after_add, 11); // 1 + 2 + 8 = 11
+        assert!(client.has_bitwise_permission(&patient, &provider, &MASK_CLINICAL));
+
+        // Remove Labs (1)
+        let mask_after_rem = client.remove_bitwise_permission(&patient, &provider, &MASK_LABS);
+        assert_eq!(mask_after_rem, 10); // 2 + 8 = 10
+        assert!(!client.has_bitwise_permission(&patient, &provider, &MASK_LABS));
+        assert!(client.has_bitwise_permission(&patient, &provider, &MASK_VITALS));
+        assert!(client.has_bitwise_permission(&patient, &provider, &MASK_CLINICAL));
+
+        // Revoke all
+        client.revoke_all(&patient, &provider);
+        assert_eq!(client.get_bitwise_mask(&patient, &provider), 0);
     }
 }

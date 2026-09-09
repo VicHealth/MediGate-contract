@@ -201,8 +201,8 @@ mod tests {
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
-        let patient_id = String::from_slice(&env, "patient:stellar:GB1234");
-        let provider_id = String::from_slice(&env, "provider:stellar:GA5678");
+        let patient_id = String::from_str(&env, "patient:stellar:GB1234");
+        let provider_id = String::from_str(&env, "provider:stellar:GA5678");
 
         let entry = client.log_access(&patient_id, &provider_id);
 
@@ -222,9 +222,9 @@ mod tests {
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
-        let patient = String::from_slice(&env, "patient:stellar:P001");
-        let provider1 = String::from_slice(&env, "provider:stellar:PR001");
-        let provider2 = String::from_slice(&env, "provider:stellar:PR002");
+        let patient = String::from_str(&env, "patient:stellar:P001");
+        let provider1 = String::from_str(&env, "provider:stellar:PR001");
+        let provider2 = String::from_str(&env, "provider:stellar:PR002");
 
         client.log_access(&patient, &provider1);
         client.log_access(&patient, &provider2);
@@ -242,7 +242,7 @@ mod tests {
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
-        let unknown = String::from_slice(&env, "patient:stellar:UNKNOWN");
+        let unknown = String::from_str(&env, "patient:stellar:UNKNOWN");
         let logs = client.get_logs(&unknown);
         assert_eq!(logs.len(), 0);
     }
@@ -256,8 +256,8 @@ mod tests {
 
         assert_eq!(client.total_accesses(), 0);
 
-        let p = String::from_slice(&env, "patient:P");
-        let d = String::from_slice(&env, "provider:D");
+        let p = String::from_str(&env, "patient:P");
+        let d = String::from_str(&env, "provider:D");
         client.log_access(&p, &d);
         assert_eq!(client.total_accesses(), 1);
     }
@@ -269,9 +269,9 @@ mod tests {
         let contract_id = env.register_contract(None, AccessLogContract);
         let client = AccessLogContractClient::new(&env, &contract_id);
 
-        let p1 = String::from_slice(&env, "p1");
-        let p2 = String::from_slice(&env, "p2");
-        let d = String::from_slice(&env, "d");
+        let p1 = String::from_str(&env, "p1");
+        let p2 = String::from_str(&env, "p2");
+        let d = String::from_str(&env, "d");
 
         client.log_access(&p1, &d);
         client.log_access(&p2, &d);
@@ -289,8 +289,8 @@ mod tests {
         let client = AccessLogContractClient::new(&env, &contract_id);
 
         client.log_access(
-            &String::from_slice(&env, ""),
-            &String::from_slice(&env, "provider:test"),
+            &String::from_str(&env, ""),
+            &String::from_str(&env, "provider:test"),
         );
     }
 
@@ -303,8 +303,8 @@ mod tests {
         let client = AccessLogContractClient::new(&env, &contract_id);
 
         client.log_access(
-            &String::from_slice(&env, "patient:test"),
-            &String::from_slice(&env, ""),
+            &String::from_str(&env, "patient:test"),
+            &String::from_str(&env, ""),
         );
     }
 }

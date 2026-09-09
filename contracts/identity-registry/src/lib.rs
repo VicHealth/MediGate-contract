@@ -250,7 +250,7 @@ mod tests {
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 
         let stellar_address = Address::generate(&env);
-        let did = String::from_slice(&env, "did:stellar:GB1234ABCD");
+        let did = String::from_str(&env, "did:stellar:GB1234ABCD");
 
         let entry = client.register_did(&did, &stellar_address, &UserRole::Patient);
 
@@ -272,7 +272,7 @@ mod tests {
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 
         let stellar_address = Address::generate(&env);
-        let did = String::from_slice(&env, "did:stellar:GB5678EFGH");
+        let did = String::from_str(&env, "did:stellar:GB5678EFGH");
 
         assert!(!client.is_active(&did));
 
@@ -288,7 +288,7 @@ mod tests {
         let client = IdentityRegistryContractClient::new(&env, &contract_id);
 
         let stellar_address = Address::generate(&env);
-        let did = String::from_slice(&env, "did:stellar:GB9012IJKL");
+        let did = String::from_str(&env, "did:stellar:GB9012IJKL");
 
         client.register_did(&did, &stellar_address, &UserRole::Patient);
         assert!(client.is_active(&did));
@@ -310,14 +310,14 @@ mod tests {
         let addr2 = Address::generate(&env);
 
         client.register_did(
-            &String::from_slice(&env, "did:stellar:AAA"),
+            &String::from_str(&env, "did:stellar:AAA"),
             &addr1,
             &UserRole::Patient,
         );
         assert_eq!(client.total_dids(), 1);
 
         client.register_did(
-            &String::from_slice(&env, "did:stellar:BBB"),
+            &String::from_str(&env, "did:stellar:BBB"),
             &addr2,
             &UserRole::Provider,
         );
